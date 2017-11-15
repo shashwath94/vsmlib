@@ -278,6 +278,8 @@ def do_test_on_pair_3CosAvg(p_train, p_test):
     vecs_a = []
     vecs_a_prime = []
     for p in p_train:
+        if is_pair_missing([p]):
+            continue
         vecs_a_prime_local = []
         for t in p[1]:
             if m.vocabulary.get_id(t) >= 0:
@@ -295,7 +297,7 @@ def do_test_on_pair_3CosAvg(p_train, p_test):
 
     results = []
     for p_test_one in p_test:
-        if is_pair_missing(p_test_one):
+        if is_pair_missing([p_test_one]):
             continue
         vec_b_prime = m.get_row(p_test_one[1][0])
         vec_b = m.get_row(p_test_one[0])
@@ -595,6 +597,8 @@ def run_category(pairs, name_dataset, name_category):
             #print("upgrading tqdm, total =", cnt_splits, "done = ", cnt)
             my_prog.update(cnt)
             #print("done")
+            # print(p_train)
+            # print(p_test)
             results += do_test_on_pairs(p_train, p_test)
 
     out = dict()
@@ -611,15 +615,16 @@ def run_category(pairs, name_dataset, name_category):
     
     out["results_short"] = dict()
     out["results_short"]["cnt_correct"] = cnt_total_correct
+    out["results_short"]["cnt_total_total"] = cnt_total_total
     out["results_short"]["score_overall"] = cnt_total_correct / cnt_total_total
 
     out["results"] = results
-    out = jsonify(out)
-    str_results = json.dumps(out, indent=4, separators=(',', ': '), sort_keys=True)
+    str_results = json.dumps(jsonify(out), indent=4, separators=(',', ': '), sort_keys=True)
     file_out = open(name_file_out, "w", errors="replace")
     file_out.write(str_results)
     file_out.close()
     logger.info("category done")
+    return out["results_short"]
 
 
 def get_pairs(fname):
@@ -661,14 +666,17 @@ def run_all(name_dataset):
     dir_tests = os.path.join(options["dir_root_dataset"], name_dataset)
     if not os.path.exists(dir_tests):
         raise Exception("test dataset dir does not exist:" + dir_tests)
+    results = {}
     for root, dirnames, filenames in os.walk(dir_tests):
         for filename in fnmatch.filter(sorted(filenames), '*'):
             print(filename)
             pairs = get_pairs(os.path.join(root, filename))
             # print(pairs)
-            run_category(pairs, name_dataset, name_category=filename)
-    # print("total accuracy: {:.4f}".format(cnt_total_correct/(cnt_total_total+1)))
+            out = run_category(pairs, name_dataset, name_category=filename)
+            results[filename] = out
 
+    # print("total accuracy: {:.4f}".format(cnt_total_correct/(cnt_total_total+1)))
+    return results
 
 def subsample_dims(newdim):
     m.matrix = m.matrix[:, 0:newdim]
@@ -695,29 +703,42 @@ def subsample_dims(newdim):
     # run_all("BATS2.0")
 
 
-def main():
+def main(args=None):
     global options
-    if len(sys.argv) > 1:
-        path_config = sys.argv[1]
+
+    if args is None or args.path_config is None:
+        if len(sys.argv) > 1:
+            path_config = sys.argv[1]
+        else:
+            print("usage: python3 -m vsmlib.benchmarks.analogy <config file>")
+            print("config file example can be found at ")
+            print("https://github.com/undertherain/vsmlib/blob/master/vsmlib/benchmarks/analogy/config_analogy.yaml")
+            # print("or, hopefully")
+            # path_script = os.path.dirname(inspect.stack()[0][1])
+            # print(os.path.join(path_script,"config_analogy.yaml"))
+            # todo: move this to data folder to it is preserved in pythong package
+            return
     else:
-        print("usage: python3 -m vsmlib.benchmarks.analogy <config file>")
-        print("config file example can be found at ")
-        print("https://github.com/undertherain/vsmlib/blob/master/vsmlib/benchmarks/analogy/config_analogy.yaml")
-        # print("or, hopefully")
-        # path_script = os.path.dirname(inspect.stack()[0][1])
-        # print(os.path.join(path_script,"config_analogy.yaml"))
-        # todo: move this to data folder to it is preserved in pythong package
-        return
+        path_config = args.path_config
 
     with open(path_config, 'r') as ymlfile:
         cfg = yaml.load(ymlfile)
-    dirs = cfg["path_vectors"]
     options["name_method"] = cfg["method"]
     options["exclude"] = cfg["exclude"]
     options["path_dataset"] = cfg["path_dataset"]
+    options["path_results"] = cfg["path_results"]
+    options["normalize"] = cfg["normalize"]
+
+    # overwrite params
+    if args is not None:
+        if args.path_vector is not None:
+            options["path_vectors"] = [args.path_vector]
+        if args.path_dataset is not None:
+            options["path_dataset"] = args.path_dataset
+    dirs = options["path_vectors"]
     options["name_dataset"] = os.path.basename(options["path_dataset"])
     options["dir_root_dataset"] = os.path.dirname(options["path_dataset"])
-    options["path_results"] = cfg["path_results"]
+
     global m
     for d in dirs:
         if "factorized" in d:
@@ -732,8 +753,12 @@ def main():
             m.normalize()
 
         print(m.name)
-        run_all(options["name_dataset"])
+        results = run_all(options["name_dataset"])
+        print(results)
         print("\noverall score: {}".format(cnt_total_correct / cnt_total_total))
+
+
+        return results
 
 
 if __name__ == "__main__":
